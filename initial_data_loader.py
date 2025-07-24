@@ -22,7 +22,7 @@ class Config:
     DB_NAME: str = "all_game.db"
     TARGET_COUNTRY: str = "TR"
     GAME_FETCH_LIMIT: int = 3000
-    GAMES_PER_PAGE: int = 500
+    GAMES_PER_PAGE: int = 100
 
     # API Uç Noktaları
     TWITCH_AUTH_URL: str = "https://id.twitch.tv/oauth2/token"
