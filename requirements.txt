@@ -1,4 +1,3 @@
 requests
 python-dotenv
 igdb-api-v4
-crawl4ai
