@@ -34,7 +34,7 @@ jobs:
 
       # 5. Adım: Değişen veritabanı dosyasını repository'ye geri commit'le
       - name: Veritabanı Değişikliklerini Commit'le
-        uses: jrkurban/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: 'Veri: Veritabanı ilk veri yükleyici ile güncellendi'
           file_pattern: 'all_game.db' # Sadece bu dosyayı takip et
