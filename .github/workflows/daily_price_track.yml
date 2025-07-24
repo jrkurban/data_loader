@@ -1,37 +1,51 @@
-name: '2 - Günlük Fiyat Takipçisi'
+# .github/workflows/daily_price_track.yml
+
+name: 'Günlük Fiyat Takipçisi'
 
 on:
-  workflow_dispatch: # Manuel çalıştırma butonu da olsun
   schedule:
-    # Bu bir CRON zamanlamasıdır. "Her gün saat 02:00 UTC'de çalıştır" demek.
-    # Türkiye saati ile yaklaşık sabah 5'ya denk gelir.
-    - cron: '0 2 * * *'
+    # Bu bir CRON zamanlamasıdır. "Her gün saat 05:00 UTC'de çalıştır" demek.
+    # Bu saat, genellikle sunucuların en az yoğun olduğu zamana ayarlanır.
+    - cron: '0 5 * * *' 
+  
+  # Manuel olarak da çalıştırabilmek için
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  track-prices:
+  track-daily-prices:
     runs-on: ubuntu-latest
 
     steps:
       - name: Kodları Checkout Yap
         uses: actions/checkout@v4
-
+        
       - name: Python'u Kur
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Bağımlılıkları Yükle
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      # Bu betik sadece Steam API anahtarına ihtiyaç duyar
       - name: Fiyat Takipçisini Çalıştır
         env:
+          # Bu betik sadece Steam API anahtarına ihtiyaç duyar
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         run: python daily_price_tracker.py
 
-      # Değişen veritabanını geri commit'le
-      - name: Veritabanı Değişikliklerini Commit'le
-        uses: jrkurban/git-auto-commit-action@v5
-        with:
-          commit_message: 'Veri: Günlük fiyat takibi yapıldı'
-          file_pattern: 'all_game.db'
+      - name: Veritabanı Değişikliklerini Commit'le ve Push'la
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'github-actions-bot@github.com'
+          
+          git add all_game.db
+          
+          # Eğer bir değişiklik varsa, o günün tarihini içeren bir mesajla commit at
+          git diff --staged --quiet || git commit -m "Veri: Günlük fiyat takibi yapıldı - $(date -u +'%d-%m-%Y')"
+          
+          git push
