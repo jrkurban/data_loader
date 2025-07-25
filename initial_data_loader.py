@@ -13,23 +13,18 @@ from typing import List, Dict, Any, Optional
 # =========================================================================
 class Config:
     """Uygulama yapılandırmasını ve sabitleri barındırır."""
-    # Güvenli Yöntem: API anahtarlarını ortam değişkenlerinden oku.
-    # Eğer ortam değişkeni yoksa, koddaki güvensiz değeri kullanır.
     TWITCH_CLIENT_ID = "biy8wy461l3w5ed99cnto60apneme3"
     TWITCH_CLIENT_SECRET = "3ohwxlmcho7xpf4s9rsy3vxgf8dzkb"
     STEAM_API_KEY = "EF38F5976C52F832D267CA05535C61F1"
 
     DB_NAME: str = "all_game.db"
     TARGET_COUNTRY: str = "TR"
-    GAME_FETCH_LIMIT: int = 3000
+    GAME_FETCH_LIMIT: int = 10000
     GAMES_PER_PAGE: int = 500
 
     # API Uç Noktaları
     TWITCH_AUTH_URL: str = "https://id.twitch.tv/oauth2/token"
     IGDB_API_URL: str = "https://api.igdb.com/v4/"
-    STEAM_APP_DETAILS_URL: str = "https://store.steampowered.com/api/appdetails"
-    STEAM_PLAYERS_URL: str = "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/"
-    STEAM_REVIEWS_URL: str = "https://store.steampowered.com/appreviews/{appid}?json=1"
 
 
 # =========================================================================
@@ -62,123 +57,27 @@ class DatabaseManager:
             "CREATE TABLE IF NOT EXISTS DimDate (date_id INTEGER PRIMARY KEY, full_date DATE NOT NULL, year INTEGER NOT NULL, month INTEGER NOT NULL, day INTEGER NOT NULL);",
             """CREATE TABLE IF NOT EXISTS DimGames
             (
-                game_id
-                INTEGER
-                PRIMARY
-                KEY,
-                steam_app_id
-                INTEGER
-                UNIQUE,
-                name
-                TEXT
-                NOT
-                NULL,
-                summary
-                TEXT,
-                cover_url
-                TEXT,
-                release_date_id
-                INTEGER,
-                developer_id
-                INTEGER,
-                publisher_id
-                INTEGER,
-                price_currency
-                TEXT,
-                price_initial
-                INTEGER,
-                price_final
-                INTEGER,
-                discount_percent
-                INTEGER,
-                FOREIGN
-                KEY
-               (
-                release_date_id
-               ) REFERENCES DimDate
-               (
-                   date_id
-               ),
-                FOREIGN KEY
-               (
-                   developer_id
-               ) REFERENCES DimDevelopers
-               (
-                   developer_id
-               ),
-                FOREIGN KEY
-               (
-                   publisher_id
-               ) REFERENCES DimPublishers
-               (
-                   publisher_id
-               )
-                );""",
+                game_id INTEGER PRIMARY KEY,
+                steam_app_id INTEGER UNIQUE,
+                playstation_concept_id TEXT UNIQUE,
+                name TEXT NOT NULL,
+                summary TEXT,
+                cover_url TEXT,
+                release_date_id INTEGER,
+                developer_id INTEGER,
+                publisher_id INTEGER,
+                FOREIGN KEY (release_date_id) REFERENCES DimDate(date_id),
+                FOREIGN KEY (developer_id) REFERENCES DimDevelopers(developer_id),
+                FOREIGN KEY (publisher_id) REFERENCES DimPublishers(publisher_id)
+            );""",
             """CREATE TABLE IF NOT EXISTS GameGenres
             (
-                game_id
-                INTEGER,
-                genre_id
-                INTEGER,
-                PRIMARY
-                KEY
-               (
-                game_id,
-                genre_id
-               ),
-                FOREIGN KEY
-               (
-                   game_id
-               ) REFERENCES DimGames
-               (
-                   game_id
-               ), FOREIGN KEY
-               (
-                   genre_id
-               ) REFERENCES DimGenres
-               (
-                   genre_id
-               )
-                );""",
-            """CREATE TABLE IF NOT EXISTS FactGameStats
-            (
-                stats_id
-                INTEGER
-                PRIMARY
-                KEY,
-                game_id
-                INTEGER
-                NOT
-                NULL,
-                date_id
-                INTEGER
-                NOT
-                NULL,
-                steam_player_count
-                INTEGER,
-                steam_positive_reviews
-                INTEGER,
-                steam_negative_reviews
-                INTEGER,
-                UNIQUE
-               (
-                game_id,
-                date_id
-               ),
-                FOREIGN KEY
-               (
-                   game_id
-               ) REFERENCES DimGames
-               (
-                   game_id
-               ), FOREIGN KEY
-               (
-                   date_id
-               ) REFERENCES DimDate
-               (
-                   date_id
-               )
-                );"""
+                game_id INTEGER,
+                genre_id INTEGER,
+                PRIMARY KEY (game_id, genre_id),
+                FOREIGN KEY (game_id) REFERENCES DimGames(game_id),
+                FOREIGN KEY (genre_id) REFERENCES DimGenres(genre_id)
+            );"""
         ]
         print("Veritabanı şeması oluşturuluyor/kontrol ediliyor...")
         for query in schema_queries:
@@ -219,7 +118,7 @@ class IGDBClient:
 
         while len(all_games) < self.config.GAME_FETCH_LIMIT:
             query = f"""
-                fields name, summary, cover.url, first_release_date, genres.name, 
+                fields name, summary, cover.url, first_release_date, genres.name,
                        involved_companies.developer, involved_companies.publisher, involved_companies.company.name,
                        websites.url, websites.category;
                 where platforms = (6, 167, 169, 48, 49) & category = 0;
@@ -242,42 +141,8 @@ class IGDBClient:
 
 class SteamClient:
     """Steam API'leri ile iletişimi yönetir."""
-
     def __init__(self, config: Config):
         self.config = config
-
-    def get_price_info(self, app_id: int) -> Optional[Dict[str, Any]]:
-        """Bir oyunun fiyat bilgisini çeker."""
-        params = {'appids': app_id, 'cc': self.config.TARGET_COUNTRY}
-        try:
-            response = requests.get(self.config.STEAM_APP_DETAILS_URL, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json().get(str(app_id))
-            if not data or not data.get('success'): return None
-            if data['data'].get('is_free') or 'price_overview' not in data['data']:
-                return {'currency': 'N/A', 'initial': 0, 'final': 0, 'discount': 0}
-            price = data['data']['price_overview']
-            return {'currency': price.get('currency'), 'initial': price.get('initial'), 'final': price.get('final'),
-                    'discount': price.get('discount_percent')}
-        except requests.RequestException:
-            return None
-
-    def get_game_stats(self, app_id: int) -> Optional[Dict[str, int]]:
-        """Bir oyunun oyuncu ve inceleme sayılarını çeker."""
-        stats = {}
-        try:
-            player_res = requests.get(self.config.STEAM_PLAYERS_URL,
-                                      params={'key': self.config.STEAM_API_KEY, 'appid': app_id}, timeout=10)
-            if player_res.ok: stats['player_count'] = player_res.json().get('response', {}).get('player_count', 0)
-            review_res = requests.get(self.config.STEAM_REVIEWS_URL.format(appid=app_id), params={'language': 'all'},
-                                      timeout=10)
-            if review_res.ok:
-                summary = review_res.json().get('query_summary', {})
-                stats['positive_reviews'], stats['negative_reviews'] = summary.get('total_positive', 0), summary.get(
-                    'total_negative', 0)
-            return stats
-        except requests.RequestException:
-            return None
 
 
 # =========================================================================
@@ -299,21 +164,18 @@ class DataProcessor:
         with self.db as cursor:
             dev_id, pub_id = self._process_companies(cursor, game_data.get('involved_companies', []))
             release_date_id = self._handle_date(cursor, game_data.get('first_release_date'))
-            steam_app_id = self._find_steam_app_id(game_data.get('websites', []))
 
-            price_info, stats_info = None, None
+            websites = game_data.get('websites', [])
+            steam_app_id = self._find_steam_app_id(websites)
+            ps_concept_id = self._find_playstation_concept_id(websites)
+
             if steam_app_id:
-                print(f"Steam verileri çekiliyor (App ID: {steam_app_id})...")
-                price_info = self.steam.get_price_info(steam_app_id)
-                time.sleep(1)
-                stats_info = self.steam.get_game_stats(steam_app_id)
-            else:
-                print("Steam sayfası bulunamadı, istatistikler atlanıyor.")
+                print(f"Oyunun Steam sayfası bulundu (App ID: {steam_app_id}).")
+            if ps_concept_id:
+                print(f"Oyunun PlayStation sayfası bulundu (Concept ID: {ps_concept_id}).")
 
-            self._update_dim_games(cursor, game_data, steam_app_id, release_date_id, dev_id, pub_id, price_info)
+            self._update_dim_games(cursor, game_data, steam_app_id, ps_concept_id, release_date_id, dev_id, pub_id)
             self._update_genres(cursor, game_id, game_data.get('genres', []))
-            if steam_app_id and stats_info:
-                self._update_fact_stats(cursor, game_id, stats_info)
 
     def _get_or_create_dimension(self, cursor: sqlite3.Cursor, table: str, name: str) -> Optional[int]:
         if not name: return None
@@ -324,15 +186,12 @@ class DataProcessor:
         cursor.execute(f"INSERT INTO Dim{table}s (name) VALUES (?)", (name,))
         return cursor.lastrowid
 
-    def _process_companies(self, cursor: sqlite3.Cursor, companies: List[Dict[str, Any]]) -> (Optional[int],
-                                                                                              Optional[int]):
+    def _process_companies(self, cursor: sqlite3.Cursor, companies: List[Dict[str, Any]]) -> (Optional[int], Optional[int]):
         dev_name, pub_name = None, None
         for company in companies:
             if company.get('developer'): dev_name = company.get('company', {}).get('name')
             if company.get('publisher'): pub_name = company.get('company', {}).get('name')
-        return self._get_or_create_dimension(cursor, 'Developer', dev_name), self._get_or_create_dimension(cursor,
-                                                                                                           'Publisher',
-                                                                                                           pub_name)
+        return self._get_or_create_dimension(cursor, 'Developer', dev_name), self._get_or_create_dimension(cursor, 'Publisher', pub_name)
 
     def _handle_date(self, cursor: sqlite3.Cursor, ts: Optional[int]) -> Optional[int]:
         if not ts: return None
@@ -344,32 +203,45 @@ class DataProcessor:
 
     def _find_steam_app_id(self, websites: List[Dict[str, Any]]) -> Optional[int]:
         for site in websites:
-            if site.get('category') == 13 and 'store.steampowered.com/app/' in site.get('url', ''):
+            if 'store.steampowered.com/app/' in site.get('url', ''):
                 try:
                     return int(site['url'].split('/app/')[1].split('/')[0])
                 except (IndexError, ValueError):
                     continue
         return None
 
-    def _update_dim_games(self, cursor, game_data, steam_id, release_id, dev_id, pub_id, price_info):
-        """DimGames tablosuna bir oyunun verilerini ekler veya günceller."""
+    def _find_playstation_concept_id(self, websites: List[Dict[str, Any]]) -> Optional[str]:
+        for site in websites:
+            if 'store.playstation.com/en-us/concept/' in site.get('url', ''):
+                try:
+                    url_parts = site['url'].split('/')
+                    for part in reversed(url_parts):
+                        if part:
+                            return part.split('_')[0]
+                except (IndexError, ValueError):
+                    continue
+        return None
+
+    def _update_dim_games(self, cursor, game_data, steam_id, ps_concept_id, release_id, dev_id, pub_id):
+        """DimGames tablosuna bir oyunun temel verilerini ekler veya günceller."""
         game_details = {
-            "game_id": game_data.get('id'), "steam_app_id": steam_id,
-            "name": game_data.get('name', 'Bilinmeyen Oyun'), "summary": game_data.get('summary', 'Özet mevcut değil.'),
+            "game_id": game_data.get('id'),
+            "steam_app_id": steam_id,
+            "playstation_concept_id": ps_concept_id,
+            "name": game_data.get('name', 'Bilinmeyen Oyun'),
+            "summary": game_data.get('summary', 'Özet mevcut değil.'),
             "cover_url": game_data.get('cover', {}).get('url', '').replace('t_thumb', 't_cover_big'),
-            "release_date_id": release_id, "developer_id": dev_id, "publisher_id": pub_id,
-            "price_currency": price_info.get('currency') if price_info else None,
-            "price_initial": price_info.get('initial') if price_info else None,
-            "price_final": price_info.get('final') if price_info else None,
-            "discount_percent": price_info.get('discount') if price_info else None,
+            "release_date_id": release_id,
+            "developer_id": dev_id,
+            "publisher_id": pub_id,
         }
         sql_query = """
             INSERT OR REPLACE INTO DimGames (
-                game_id, steam_app_id, name, summary, cover_url, release_date_id, developer_id, publisher_id,
-                price_currency, price_initial, price_final, discount_percent
+                game_id, steam_app_id, playstation_concept_id, name, summary,
+                cover_url, release_date_id, developer_id, publisher_id
             ) VALUES (
-                :game_id, :steam_app_id, :name, :summary, :cover_url, :release_date_id, :developer_id, :publisher_id,
-                :price_currency, :price_initial, :price_final, :discount_percent
+                :game_id, :steam_app_id, :playstation_concept_id, :name, :summary,
+                :cover_url, :release_date_id, :developer_id, :publisher_id
             )"""
         cursor.execute(sql_query, game_details)
         print(f"DimGames tablosu '{game_details['name']}' için güncellendi.")
@@ -382,19 +254,6 @@ class DataProcessor:
                 if genre_id: cursor.execute("INSERT OR IGNORE INTO GameGenres (game_id, genre_id) VALUES (?, ?)",
                                             (game_id, genre_id))
 
-    def _update_fact_stats(self, cursor, game_id, stats_info):
-        """FactGameStats tablosuna günlük istatistikleri ekler."""
-        print("Günlük istatistikler FactGameStats'e kaydediliyor...")
-        today_id = self._handle_date(cursor, int(time.time()))
-        cursor.execute("""
-            INSERT OR REPLACE INTO FactGameStats 
-                (game_id, date_id, steam_player_count, steam_positive_reviews, steam_negative_reviews)
-            VALUES (?, ?, ?, ?, ?)""",
-                       (game_id, today_id, stats_info.get('player_count'),
-                        stats_info.get('positive_reviews'), stats_info.get('negative_reviews'))
-                       )
-        print(f"Kaydedildi: Anlık Oyuncu = {stats_info.get('player_count', 'N/A')}")
-
 
 # =========================================================================
 # 5. ANA ÇALIŞTIRMA BLOĞU (MAIN EXECUTION)
@@ -404,9 +263,8 @@ def main():
     print("--- Analitik Veri Toplama Programı Başlatıldı ---")
     config = Config()
 
-    if not all([config.TWITCH_CLIENT_ID, config.TWITCH_CLIENT_SECRET, config.STEAM_API_KEY]):
-        print(
-            "KRİTİK HATA: Lütfen ortam değişkenlerini (TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, STEAM_API_KEY) ayarlayın.")
+    if not all([config.TWITCH_CLIENT_ID, config.TWITCH_CLIENT_SECRET]):
+        print("KRİTİK HATA: Lütfen ortam değişkenlerini (TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET) ayarlayın.")
         return
 
     db_manager = DatabaseManager(config.DB_NAME)
@@ -433,6 +291,13 @@ def main():
             print(f"[{i + 1}/{total_games}] oyun başarıyla tamamlandı.")
         except Exception as e:
             print(f"HATA: '{game.get('name')}' işlenirken bir hata oluştu ve atlandı: {e}")
+
+        # --- YENİ EKLENEN KISIM ---
+        # Her oyun işlendikten sonra 1 saniye bekle.
+        # Bu, API'lere yapılan çağrıların hızını yavaşlatır ve sunucuyu yormaz.
+        if i < total_games - 1: # Son oyundan sonra bekleme yapmaya gerek yok.
+             print("...1 saniye bekleniyor...")
+             time.sleep(1)
 
     print("\n--- Program Tamamlandı ---")
 
