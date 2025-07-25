@@ -180,9 +180,10 @@ class DatabaseManager:
                )
                 );"""
         ]
+        print("Veritabanı şeması oluşturuluyor/kontrol ediliyor...")
         for query in schema_queries:
             cursor.execute(query)
-
+        print("Şema hazır.")
 
 
 # =========================================================================
@@ -197,14 +198,17 @@ class IGDBClient:
 
     def _get_access_token(self) -> Optional[str]:
         if not self.config.TWITCH_CLIENT_ID or not self.config.TWITCH_CLIENT_SECRET:
+            print("HATA: Twitch Client ID veya Secret ayarlanmamış.")
             return None
         params = {'client_id': self.config.TWITCH_CLIENT_ID, 'client_secret': self.config.TWITCH_CLIENT_SECRET,
                   'grant_type': 'client_credentials'}
         try:
             response = requests.post(self.config.TWITCH_AUTH_URL, data=params)
             response.raise_for_status()
+            print("Twitch'ten Access Token başarıyla alındı.")
             return response.json().get('access_token')
         except requests.RequestException as e:
+            print(f"HATA: Access token alınamadı. Detay: {e}")
             return None
 
     def fetch_games(self) -> List[Dict[str, Any]]:
@@ -221,6 +225,7 @@ class IGDBClient:
                 where platforms = (6, 167, 169, 48, 49) & category = 0;
                 sort popularity desc; limit {self.config.GAMES_PER_PAGE}; offset {offset};
             """
+            print(f"Oyunlar çekiliyor... (Hedef: {len(all_games)}/{self.config.GAME_FETCH_LIMIT})")
             try:
                 response = requests.post(f"{self.config.IGDB_API_URL}games", headers=headers, data=query)
                 response.raise_for_status()
@@ -230,6 +235,7 @@ class IGDBClient:
                 offset += self.config.GAMES_PER_PAGE
                 time.sleep(0.5)
             except requests.RequestException as e:
+                print(f"HATA: IGDB'den veri çekilirken sorun oluştu: {e}")
                 break
         return all_games[:self.config.GAME_FETCH_LIMIT]
 
@@ -288,6 +294,7 @@ class DataProcessor:
         """Tek bir oyunu alır, işler ve veritabanına kaydeder."""
         game_id = game_data.get('id')
         game_name = game_data.get('name', 'Bilinmeyen Oyun')
+        print(f"\n--- İşleniyor: {game_name} (ID: {game_id}) ---")
 
         with self.db as cursor:
             dev_id, pub_id = self._process_companies(cursor, game_data.get('involved_companies', []))
@@ -296,10 +303,12 @@ class DataProcessor:
 
             price_info, stats_info = None, None
             if steam_app_id:
+                print(f"Steam verileri çekiliyor (App ID: {steam_app_id})...")
                 price_info = self.steam.get_price_info(steam_app_id)
                 time.sleep(1)
                 stats_info = self.steam.get_game_stats(steam_app_id)
             else:
+                print("Steam sayfası bulunamadı, istatistikler atlanıyor.")
 
             self._update_dim_games(cursor, game_data, steam_app_id, release_date_id, dev_id, pub_id, price_info)
             self._update_genres(cursor, game_id, game_data.get('genres', []))
@@ -311,6 +320,7 @@ class DataProcessor:
         cursor.execute(f"SELECT {table}_id FROM Dim{table}s WHERE name = ?", (name,))
         result = cursor.fetchone()
         if result: return result[0]
+        print(f"Yeni boyut: {table} -> {name}")
         cursor.execute(f"INSERT INTO Dim{table}s (name) VALUES (?)", (name,))
         return cursor.lastrowid
 
@@ -362,6 +372,7 @@ class DataProcessor:
                 :price_currency, :price_initial, :price_final, :discount_percent
             )"""
         cursor.execute(sql_query, game_details)
+        print(f"DimGames tablosu '{game_details['name']}' için güncellendi.")
 
     def _update_genres(self, cursor, game_id, genres):
         for genre in genres:
@@ -373,6 +384,7 @@ class DataProcessor:
 
     def _update_fact_stats(self, cursor, game_id, stats_info):
         """FactGameStats tablosuna günlük istatistikleri ekler."""
+        print("Günlük istatistikler FactGameStats'e kaydediliyor...")
         today_id = self._handle_date(cursor, int(time.time()))
         cursor.execute("""
             INSERT OR REPLACE INTO FactGameStats 
@@ -381,6 +393,7 @@ class DataProcessor:
                        (game_id, today_id, stats_info.get('player_count'),
                         stats_info.get('positive_reviews'), stats_info.get('negative_reviews'))
                        )
+        print(f"Kaydedildi: Anlık Oyuncu = {stats_info.get('player_count', 'N/A')}")
 
 
 # =========================================================================
@@ -388,9 +401,12 @@ class DataProcessor:
 # =========================================================================
 def main():
     """Ana program akışını yönetir."""
+    print("--- Analitik Veri Toplama Programı Başlatıldı ---")
     config = Config()
 
     if not all([config.TWITCH_CLIENT_ID, config.TWITCH_CLIENT_SECRET, config.STEAM_API_KEY]):
+        print(
+            "KRİTİK HATA: Lütfen ortam değişkenlerini (TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, STEAM_API_KEY) ayarlayın.")
         return
 
     db_manager = DatabaseManager(config.DB_NAME)
@@ -405,14 +421,20 @@ def main():
     games = igdb_client.fetch_games()
 
     if not games:
+        print("İşlenecek oyun bulunamadı.")
         return
 
     total_games = len(games)
+    print(f"\nToplam {total_games} oyun veritabanına işlenecek...")
 
     for i, game in enumerate(games):
         try:
             processor.process_and_save_game(game)
+            print(f"[{i + 1}/{total_games}] oyun başarıyla tamamlandı.")
         except Exception as e:
+            print(f"HATA: '{game.get('name')}' işlenirken bir hata oluştu ve atlandı: {e}")
+
+    print("\n--- Program Tamamlandı ---")
 
 
 if __name__ == "__main__":
